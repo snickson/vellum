@@ -1,20 +1,23 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <DefineConstants Condition="'$(OutputType)' == 'Library'">IS_LIB</DefineConstants>
     <PublishSingleFile Condition="'$(OutputType)' == 'Exe' And '$(Configuration)' == 'Release'">true</PublishSingleFile>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <TargetFramework>net6.0</TargetFramework>
     <RootNamespace>Vellum</RootNamespace>
     <Configurations>Debug;Release;</Configurations>
     <Authors>clarkx86</Authors>
     <RepositoryUrl>https://github.com/clarkx86/vellum</RepositoryUrl>
+    <ApplicationIcon />
+    <OutputType>Exe</OutputType>
+    <StartupObject />
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Mono.Options" Version="6.6.0.161">
+    <PackageReference Include="Mono.Options" Version="6.12.0.148">
       <PrivateAssets Condition="'$(OutputType)' == 'Library'">all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
 </Project>
