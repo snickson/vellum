@@ -1,15 +1,23 @@
-using System;
-using System.Collections.Generic;
-using System.Reflection;
-
 namespace Vellum.Extension
 {
+    using System;
+    using System.Collections.Generic;
+
     public abstract class InternalPlugin : IPlugin
     {
         #region PLUGIN
+
         public IHost Host;
-        private Dictionary<byte, IPlugin.HookHandler> _hookCallbacks = new Dictionary<byte, IPlugin.HookHandler>();
-        public PluginType PluginType { get { return PluginType.INTERNAL; } }
+
+        private readonly Dictionary<byte, IPlugin.HookHandler> _hookCallbacks = new Dictionary<byte, IPlugin.HookHandler>();
+
+        public PluginType PluginType
+        {
+            get
+            {
+                return PluginType.INTERNAL;
+            }
+        }
 
         public void Initialize(IHost host)
         {
@@ -22,14 +30,14 @@ namespace Vellum.Extension
 
         public Dictionary<byte, string> GetHooks()
         {
-            Dictionary<byte, string> hooks = new Dictionary<byte, string>();
-            Type hookType = Type.GetType($"{this.GetType().FullName}+Hook");
+            var hooks = new Dictionary<byte, string>();
+            var hookType = Type.GetType($"{GetType().FullName}+Hook");
 
             // foreach (byte hookId in Enum.GetValues(hookType))
             //     hooks.Add(hookId, Enum.GetName(hookType, hookId));
 
-            string[] hookNames = Enum.GetNames(hookType);
-            for (int i = 0; i < hookNames.Length; i++)
+            var hookNames = Enum.GetNames(hookType);
+            for (var i = 0; i < hookNames.Length; i++)
                 hooks.Add((byte)i, hookNames[i]);
 
             return hooks;
@@ -48,6 +56,7 @@ namespace Vellum.Extension
             if (_hookCallbacks.ContainsKey(hookId))
                 _hookCallbacks[hookId]?.Invoke(this, e == null ? EventArgs.Empty : e);
         }
+
         #endregion
     }
 }

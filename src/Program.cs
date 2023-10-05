@@ -1,110 +1,118 @@
-﻿using System;
-using System.Diagnostics;
-using System.IO;
-using System.Text;
-using System.Collections.Generic;
-using System.Security.Cryptography;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Timers;
-using Mono.Options;
-using Newtonsoft.Json;
-using Vellum.Automation;
-using Vellum.Networking;
-using Vellum.Extension;
-
-namespace Vellum
+﻿namespace Vellum
 {
+    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.IO;
+    using System.Reflection;
+    using System.Security.Cryptography;
+    using System.Text;
+    using System.Text.RegularExpressions;
+    using System.Threading;
+
+    using Mono.Options;
+
+    using Newtonsoft.Json;
+
+    using Vellum.Automation;
+    using Vellum.Extension;
+    using Vellum.Networking;
+
+    using Timer = System.Timers.Timer;
+
     public class VellumHost : Host
     {
-        private const string _serverPropertiesPath = "server.properties";
-        public const string TempPath = "temp/";
-        private static string _pluginDirectory = "plugins/";
-        private string _configPath = "configuration.json";
         public delegate void InputStreamHandler(string text);
+
+        public const string TempPath = "temp/";
+
+        private const string _serverPropertiesPath = "server.properties";
+
+        private static string _pluginDirectory = "plugins/";
+
         private static InputStreamHandler inStream;
+
         private static BackupManager _backupManager;
+
         private static RenderManager _renderManager;
+
         private static Watchdog _bdsWatchdog;
 
-        private static UpdateChecker _updateChecker = new UpdateChecker(ReleaseProvider.GITHUB_RELEASES, @"https://api.github.com/repos/clarkx86/vellum/releases/latest", @"^v?(\d+)\.(\d+)\.(\d+)");
+        private static readonly UpdateChecker _updateChecker = new UpdateChecker(
+            ReleaseProvider.GITHUB_RELEASES,
+            @"https://api.github.com/repos/clarkx86/vellum/releases/latest",
+            @"^v?(\d+)\.(\d+)\.(\d+)");
+
         private static uint playerCount;
-        private static Version _localVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        public enum Hook
-        {
-            RELOAD_CONFIG,
-            BACKUP_SCHEDULED,
-            FORCE_BACKUP,
-            FORCE_RENDER,
-            EXIT_SCHEDULED,     // Gets invoked as soon as the user schedules a server shutdown
-            EXIT_USER           // Gets invoked before exiting, given that the user manually requested a server shutdown using the "stop" command
-        }
 
-        static void Main(string[] args)
-        {
-            string suffix = "";
+        private static readonly Version _localVersion = Assembly.GetExecutingAssembly().GetName().Version;
 
-#if DEBUG
-            suffix = " DEBUG";
-#elif ALPHA
-            suffix = " alpha";
-#elif BETA
-            suffix = " beta";
-#endif
-
-            Console.WriteLine("vellum v{0} build {1}\n{2}by clarkx86, DeepBlue & contributors\n", UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION) + suffix, _localVersion.Build, new string(' ', 7));
-
-            new VellumHost(args);
-        }
+        private string _configPath = "configuration.json";
 
         public VellumHost(string[] args)
         {
             Thread _ioThread;
-            bool _readInput = true;
+            var _readInput = true;
 
-            bool printHelp = false;
-            bool noStart = false;
+            var printHelp = false;
+            var noStart = false;
             string restorePath = null;
-            bool backupOnStartup = true;
+            var backupOnStartup = true;
 
-            OptionSet options = new OptionSet() {
+            var options = new OptionSet
+            {
                 { "h|help", "Displays a help screen.", v => { printHelp = v != null; } },
-                { "c=|configuration=", "The configuration file to load settings from.", v => { if (!String.IsNullOrWhiteSpace(v)) _configPath = v.Trim(); } },
-                { "p=|plugin-directory=", "The directory to scan for plugins.", v => { if (!String.IsNullOrWhiteSpace(v)) _pluginDirectory = v; } },
-                { "r=|restore=", "Path to an archive to restore a backup from.", v => { if (!String.IsNullOrWhiteSpace(v)) restorePath = Path.GetFullPath(v); } },
+                {
+                    "c=|configuration=", "The configuration file to load settings from.", v =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(v)) _configPath = v.Trim();
+                    }
+                },
+                {
+                    "p=|plugin-directory=", "The directory to scan for plugins.", v =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(v)) _pluginDirectory = v;
+                    }
+                },
+                {
+                    "r=|restore=", "Path to an archive to restore a backup from.", v =>
+                    {
+                        if (!string.IsNullOrWhiteSpace(v)) restorePath = Path.GetFullPath(v);
+                    }
+                },
                 { "no-start", "In conjunction with the --restore flag, this tells the application to not start the server after successfully restoring a backup.", v => { noStart = v != null; } },
-                { "no-backup-on-startup", "Disables the initial temporary backup on startup.", v => { backupOnStartup = v == null; } }
+                { "no-backup-on-startup", "Disables the initial temporary backup on startup.", v => { backupOnStartup = v == null; } },
             };
-            System.Collections.Generic.List<string> extraOptions = options.Parse(args);
+            var extraOptions = options.Parse(args);
 
             if (printHelp)
             {
-                System.Console.WriteLine("Overview of available parameters:");
+                Console.WriteLine("Overview of available parameters:");
                 options.WriteOptionDescriptions(Console.Out);
-                System.Environment.Exit(0);
+                Environment.Exit(0);
             }
 
-            Version bdsVersion = new Version();
+            var bdsVersion = new Version();
 
             if (File.Exists(_configPath))
             {
                 // Load configuration
                 RunConfig = LoadConfiguration(_configPath);
 
-                string bdsDirPath = Path.GetDirectoryName(RunConfig.BdsBinPath);
-                string worldName = "Bedrock level";
+                var bdsDirPath = Path.GetDirectoryName(RunConfig.BdsBinPath);
+                var worldName = "Bedrock level";
 
                 Console.Write($"Reading \"{_serverPropertiesPath}\"... ");
 
-                using (StreamReader reader = new StreamReader(File.OpenRead(Path.Join(bdsDirPath, _serverPropertiesPath))))
+                using (var reader = new StreamReader(File.OpenRead(Path.Join(bdsDirPath, _serverPropertiesPath))))
                     worldName = Regex.Match(reader.ReadToEnd(), @"^level\-name\=(.+)", RegexOptions.Multiline).Groups[1].Value.Trim();
 
-                string worldPath = Path.Join(bdsDirPath, "worlds", worldName);
-                string tempWorldPath = Path.Join(Directory.GetCurrentDirectory(), TempPath, worldName);
+                var worldPath = Path.Join(bdsDirPath, "worlds", worldName);
+                var tempWorldPath = Path.Join(Directory.GetCurrentDirectory(), TempPath, worldName);
 
                 Console.WriteLine("Done!");
 
-                if (!String.IsNullOrWhiteSpace(restorePath))
+                if (!string.IsNullOrWhiteSpace(restorePath))
                 {
                     Console.WriteLine("\n\"--restore\" flag provided, attempting to restore backup from specified archive...");
                     BackupManager.Restore(restorePath, worldPath);
@@ -113,12 +121,12 @@ namespace Vellum
                     if (noStart)
                     {
                         Console.WriteLine("\"--no-start\" flag provided, exiting...");
-                        System.Environment.Exit(0);
+                        Environment.Exit(0);
                     }
                 }
 
-
                 #region CONDITIONAL UPDATE CHECK
+
                 if (RunConfig.CheckForUpdates)
                 {
                     Console.WriteLine("Checking for updates...");
@@ -127,62 +135,64 @@ namespace Vellum
                     {
                         if (_updateChecker.RemoteVersion > _localVersion)
                         {
-                            Console.WriteLine("\nA new update is available!\nLocal version:\t{0}\nRemote version:\t{1}\nVisit {2} to update.\n", UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION), UpdateChecker.ParseVersion(_updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION), @"https://git.io/vellum-latest");
+                            Console.WriteLine(
+                                "\nA new update is available!\nLocal version:\t{0}\nRemote version:\t{1}\nVisit {2} to update.\n",
+                                UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION),
+                                UpdateChecker.ParseVersion(_updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION),
+                                @"https://git.io/vellum-latest");
                         }
                     }
                     else
                     {
-                        System.Console.WriteLine("Could not check for updates.");
+                        Console.WriteLine("Could not check for updates.");
                     }
                 }
+
                 #endregion
 
-                if (RunConfig.Renders.EnableRenders && String.IsNullOrWhiteSpace(RunConfig.Renders.PapyrusBinPath))
+                if (RunConfig.Renders.EnableRenders && string.IsNullOrWhiteSpace(RunConfig.Renders.PapyrusBinPath))
                 {
                     Console.WriteLine("Disabling renders because no valid path to a Papyrus executable has been specified");
                     RunConfig.Renders.EnableRenders = false;
                 }
 
-
                 #region BDS process and input thread
-                ProcessStartInfo serverStartInfo = new ProcessStartInfo()
-                {
-                    FileName = RunConfig.BdsBinPath,
-                    WorkingDirectory = bdsDirPath
-                };
+
+                var serverStartInfo = new ProcessStartInfo { FileName = RunConfig.BdsBinPath, WorkingDirectory = bdsDirPath };
 
                 // Set environment variable for linux-based systems
-                if (System.Environment.OSVersion.Platform == PlatformID.Unix)
+                if (Environment.OSVersion.Platform == PlatformID.Unix)
                 {
                     serverStartInfo.EnvironmentVariables.Add("LD_LIBRARY_PATH", bdsDirPath);
                 }
 
-                ProcessManager bds = new ProcessManager(serverStartInfo, new string[] {
-                    "^(" + worldName.Trim() + @"(?>\/db)?\/)",
-                    "^(Saving...)",
-                    "^(A previous save has not been completed.)",
-                    "^(Data saved. Files are now ready to be copied.)",
-                    "^(Changes to the (level|world) are resumed.)",
-                    "Running AutoCompaction..."
-                });
+                var bds = new ProcessManager(
+                    serverStartInfo,
+                    new[]
+                    {
+                        "^(" + worldName.Trim() + @"(?>\/db)?\/)", "(Saving...)", "(A previous save has not been completed.)", "(Data saved. Files are now ready to be copied.)",
+                        "(Changes to the world are resumed.)", "Running AutoCompaction...",
+                    });
 
                 if (RunConfig.BdsWatchdog)
                 {
                     _bdsWatchdog = new Watchdog(bds);
 
-                    _bdsWatchdog.RegisterHook((byte)Watchdog.Hook.LIMIT_REACHED, (object sender, EventArgs e) =>
-                    {
-                        SaveConfiguration(RunConfig, _configPath);
-                        System.Environment.Exit(1);
-                    });
+                    _bdsWatchdog.RegisterHook(
+                        (byte)Watchdog.Hook.LIMIT_REACHED,
+                        (sender, e) =>
+                        {
+                            SaveConfiguration(RunConfig, _configPath);
+                            Environment.Exit(1);
+                        });
                 }
 
                 // Stop BDS gracefully on unhandled exceptions
                 if (RunConfig.StopBdsOnException)
                 {
-                    System.AppDomain.CurrentDomain.UnhandledException += (object sender, UnhandledExceptionEventArgs e) =>
+                    AppDomain.CurrentDomain.UnhandledException += (sender, e) =>
                     {
-                        Console.WriteLine($"Stopping BDS due to an unhandled exception from vellum...\n{e.ExceptionObject.ToString()}");
+                        Console.WriteLine($"Stopping BDS due to an unhandled exception from vellum...\n{e.ExceptionObject}");
 
                         if (bds.IsRunning)
                         {
@@ -194,63 +204,65 @@ namespace Vellum
                 }
 
                 // Input thread
-                _ioThread = new Thread(() =>
-                {
-                    while (_readInput)
-                        inStream?.Invoke(Console.ReadLine());
-                });
+                _ioThread = new Thread(
+                    () =>
+                    {
+                        while (_readInput)
+                            inStream?.Invoke(Console.ReadLine());
+                    });
                 _ioThread.Start();
 
                 // Store current BDS version
-                bds.RegisterMatchHandler(CommonRegex.Version, (object sender, MatchedEventArgs e) =>
-                {
-                    bdsVersion = UpdateChecker.ParseVersion(e.Matches[0].Groups[1].Value, VersionFormatting.MAJOR_MINOR_REVISION_BUILD);
-                });
-                
+                bds.RegisterMatchHandler(CommonRegex.Version, (sender, e) => { bdsVersion = UpdateChecker.ParseVersion(e.Matches[0].Groups[1].Value, VersionFormatting.MAJOR_MINOR_REVISION_BUILD); });
+
                 playerCount = 0;
 
-                bool nextBackup = true;
+                var nextBackup = true;
                 if (RunConfig.Backups.OnActivityOnly)
                 {
                     nextBackup = false;
 
                     // Player connect/ disconnect messages
-                    bds.RegisterMatchHandler(CommonRegex.PlayerConnected, (object sender, MatchedEventArgs e) =>
-                    {
-                        playerCount++;
-                        nextBackup = true;
-                    });
+                    bds.RegisterMatchHandler(
+                        CommonRegex.PlayerConnected,
+                        (sender, e) =>
+                        {
+                            playerCount++;
+                            nextBackup = true;
+                        });
 
-                    bds.RegisterMatchHandler(CommonRegex.PlayerDisconnected, (object sender, MatchedEventArgs e) =>
-                    {
-                        playerCount--;
-                    });
+                    bds.RegisterMatchHandler(CommonRegex.PlayerDisconnected, (sender, e) => { playerCount--; });
                 }
+
                 #endregion
 
                 _renderManager = new RenderManager(bds, RunConfig);
                 _backupManager = new BackupManager(bds, RunConfig);
 
                 #region PLUGIN LOADING
+
                 if (Directory.Exists(_pluginDirectory))
                 {
                     SetPluginDirectory(_pluginDirectory);
 
                     #region INTERNAL PLUGINS
+
                     AddPlugin(bds);
                     AddPlugin(_backupManager);
                     AddPlugin(_renderManager);
 
                     if (RunConfig.BdsWatchdog)
                         AddPlugin(_bdsWatchdog);
+
                     #endregion
 
                     if (LoadPlugins() > 0)
                     {
-                        foreach (IPlugin plugin in GetPlugins())
+                        foreach (var plugin in GetPlugins())
                         {
                             if (plugin.PluginType == PluginType.EXTERNAL)
-                                Console.WriteLine($"Loaded plugin: {plugin.GetType().Name} v{UpdateChecker.ParseVersion(System.Reflection.Assembly.GetAssembly(plugin.GetType()).GetName().Version, VersionFormatting.MAJOR_MINOR_REVISION)}");
+                                Console.WriteLine(
+                                    $"Loaded plugin: {plugin.GetType().Name} v{UpdateChecker.ParseVersion(Assembly.GetAssembly(plugin.GetType()).GetName().Version, VersionFormatting.MAJOR_MINOR_REVISION)}");
                         }
 
                         Console.WriteLine();
@@ -260,12 +272,13 @@ namespace Vellum
                 {
                     Directory.CreateDirectory(_pluginDirectory);
                 }
+
                 #endregion
 
                 // Scheduled/ interval backups
                 if (RunConfig.Backups.EnableBackups)
                 {
-                    double interval = RunConfig.Backups.BackupInterval * 60000;
+                    var interval = RunConfig.Backups.BackupInterval * 60000;
 
                     if (RunConfig.Backups.EnableSchedule)
                     {
@@ -275,9 +288,9 @@ namespace Vellum
                             interval = 1;
                     }
 
-                    System.Timers.Timer backupIntervalTimer = new System.Timers.Timer(interval);
+                    var backupIntervalTimer = new Timer(interval);
                     backupIntervalTimer.AutoReset = true;
-                    backupIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
+                    backupIntervalTimer.Elapsed += (sender, e) =>
                     {
                         if (backupIntervalTimer.Interval != 1) // This prevents performing a backup if scheduled backups are enabled and the next real time-span hasn't been determined yet
                         {
@@ -295,18 +308,18 @@ namespace Vellum
 
                     if (RunConfig.Backups.EnableSchedule && RunConfig.Backups.Schedule.Length > 0)
                     {
-                        backupIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
+                        backupIntervalTimer.Elapsed += (sender, e) =>
                         {
                             // Check which entry is up next
-                            TimeSpan nextSpan = TimeSpan.MaxValue;
+                            var nextSpan = TimeSpan.MaxValue;
 
-                            foreach (string clockTime in RunConfig.Backups.Schedule)
+                            foreach (var clockTime in RunConfig.Backups.Schedule)
                             {
                                 // Parse & validate entry
                                 // Match match = Regex.Match(clockTime, @"^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*([aApP][mM])");   // 12h format
-                                Match match = Regex.Match(clockTime, @"^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$");                 // 24h format
+                                var match = Regex.Match(clockTime, @"^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$"); // 24h format
 
-                                bool valid = false;
+                                var valid = false;
                                 int hour, minute;
 
                                 if (match.Groups.Count == 3)
@@ -318,7 +331,7 @@ namespace Vellum
                                     {
                                         valid = true;
 
-                                        TimeSpan span = new TimeSpan((hour == 0 ? 24 : hour) - DateTime.Now.Hour, minute - DateTime.Now.Minute, 0 - DateTime.Now.Second);
+                                        var span = new TimeSpan((hour == 0 ? 24 : hour) - DateTime.Now.Hour, minute - DateTime.Now.Minute, 0 - DateTime.Now.Second);
 
                                         if (span.TotalSeconds > 0 && span < nextSpan)
                                             nextSpan = span;
@@ -330,39 +343,40 @@ namespace Vellum
                             }
 
                             // Set the new interval
-                            Console.WriteLine($"Next scheduled backup is at {(DateTime.Now + nextSpan).ToShortTimeString()} (in {nextSpan.Days} days, {nextSpan.Hours} hours, {nextSpan.Minutes} minutes and {nextSpan.Seconds} seconds)");
+                            Console.WriteLine(
+                                $"Next scheduled backup is at {(DateTime.Now + nextSpan).ToShortTimeString()} (in {nextSpan.Days} days, {nextSpan.Hours} hours, {nextSpan.Minutes} minutes and {nextSpan.Seconds} seconds)");
                             backupIntervalTimer.Interval = nextSpan.TotalMilliseconds;
-                            CallHook((byte)Hook.BACKUP_SCHEDULED, new HookEventArgs() { Attachment = nextSpan });
+                            CallHook((byte)Hook.BACKUP_SCHEDULED, new HookEventArgs { Attachment = nextSpan });
                         };
                     }
 
                     backupIntervalTimer.Start();
 
-                    bds.RegisterMatchHandler("Starting Server", (object sender, MatchedEventArgs e) =>
-                    {
-                        // bds.RegisterMatchHandler(CommonRegex.ServerStarted, (object sender, MatchedEventArgs e) => {
-                        if (RunConfig.Backups.StopBeforeBackup)
+                    bds.RegisterMatchHandler(
+                        "Starting Server",
+                        (sender, e) =>
                         {
-                            System.Timers.Timer backupNotificationTimer = new System.Timers.Timer((RunConfig.Backups.BackupInterval * 60000) - Math.Clamp(RunConfig.Backups.NotifyBeforeStop * 1000, 0, RunConfig.Backups.BackupInterval * 60000));
-                            backupNotificationTimer.AutoReset = false;
-                            backupNotificationTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
+                            // bds.RegisterMatchHandler(CommonRegex.ServerStarted, (object sender, MatchedEventArgs e) => {
+                            if (RunConfig.Backups.StopBeforeBackup)
                             {
-                                bds.SendTellraw(String.Format("Shutting down server in {0} seconds to take a backup.", RunConfig.Backups.NotifyBeforeStop));
-                            };
-                            backupNotificationTimer.Start();
-                        }
-                    });
+                                var backupNotificationTimer = new Timer(
+                                    (RunConfig.Backups.BackupInterval * 60000) - Math.Clamp(RunConfig.Backups.NotifyBeforeStop * 1000, 0, RunConfig.Backups.BackupInterval * 60000));
+                                backupNotificationTimer.AutoReset = false;
+                                backupNotificationTimer.Elapsed += (sender, e) =>
+                                {
+                                    bds.SendTellraw($"Shutting down server in {RunConfig.Backups.NotifyBeforeStop} seconds to take a backup.");
+                                };
+                                backupNotificationTimer.Start();
+                            }
+                        });
                 }
 
                 // Render interval
                 if (RunConfig.Renders.EnableRenders)
                 {
-                    System.Timers.Timer renderIntervalTimer = new System.Timers.Timer(RunConfig.Renders.RenderInterval * 60000);
+                    var renderIntervalTimer = new Timer(RunConfig.Renders.RenderInterval * 60000);
                     renderIntervalTimer.AutoReset = true;
-                    renderIntervalTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
-                    {
-                        InvokeRender(worldPath, tempWorldPath);
-                    };
+                    renderIntervalTimer.Elapsed += (sender, e) => { InvokeRender(worldPath, tempWorldPath); };
                     renderIntervalTimer.Start();
                 }
 
@@ -381,16 +395,17 @@ namespace Vellum
                 }
 
                 // Input thread
-                inStream = (string text) =>
+                inStream = text =>
                 {
                     if (RunConfig.BusyCommands || (!_backupManager.Processing && !_renderManager.Processing))
                     {
                         #region CUSTOM COMMANDS
-                        MatchCollection cmd = Regex.Matches(text.ToLower().Trim(), @"(\S+)");
+
+                        var cmd = Regex.Matches(text.ToLower().Trim(), @"(\S+)");
 
                         if (cmd.Count > 0)
                         {
-                            bool result = false;
+                            var result = false;
                             switch (cmd[0].Captures[0].Value)
                             {
                                 case "force":
@@ -413,15 +428,17 @@ namespace Vellum
                                                         CallHook((byte)Hook.FORCE_RENDER);
                                                         break;
                                                 }
+
                                                 break;
                                         }
                                     }
+
                                     break;
 
                                 case "stop":
-                                    System.Timers.Timer shutdownTimer = new System.Timers.Timer();
+                                    var shutdownTimer = new Timer();
                                     shutdownTimer.AutoReset = false;
-                                    shutdownTimer.Elapsed += (object sender, ElapsedEventArgs e) =>
+                                    shutdownTimer.Elapsed += (sender, e) =>
                                     {
                                         // _renderManager.Abort();
                                         _bdsWatchdog.Disable();
@@ -436,18 +453,18 @@ namespace Vellum
                                         CallHook((byte)Hook.EXIT_USER);
 
                                         Console.WriteLine("vellum quit correctly");
-                                        System.Environment.Exit(0);
+                                        Environment.Exit(0);
                                     };
 
-                                    if (cmd.Count == 2 && !String.IsNullOrWhiteSpace(cmd[1].Captures[0].Value))
+                                    if (cmd.Count == 2 && !string.IsNullOrWhiteSpace(cmd[1].Captures[0].Value))
                                     {
                                         try
                                         {
-                                            double interval = Convert.ToDouble(cmd[1].Captures[0].Value);
+                                            var interval = Convert.ToDouble(cmd[1].Captures[0].Value);
                                             shutdownTimer.Interval = (interval > 0 ? interval * 1000 : 1);
-                                            bds.SendTellraw(String.Format("Scheduled shutdown in {0} seconds...", interval));
+                                            bds.SendTellraw($"Scheduled shutdown in {interval} seconds...");
                                             result = true;
-                                            CallHook((byte)Hook.EXIT_SCHEDULED, new HookEventArgs() { Attachment = interval });
+                                            CallHook((byte)Hook.EXIT_SCHEDULED, new HookEventArgs { Attachment = interval });
                                         }
                                         catch
                                         {
@@ -465,10 +482,11 @@ namespace Vellum
                                     {
                                         shutdownTimer.Start();
                                     }
+
                                     break;
 
                                 case "reload":
-                                    bool isVellumConfig = false;
+                                    var isVellumConfig = false;
 
                                     if (cmd.Count == 2 && cmd[1].Captures[0].Value == "vellum")
                                     {
@@ -479,23 +497,36 @@ namespace Vellum
                                     {
                                         bds.SendInput(text);
                                     }
+
                                     result = true;
-                                    CallHook((byte)Hook.RELOAD_CONFIG, new HookEventArgs() { Attachment = isVellumConfig });
+                                    CallHook((byte)Hook.RELOAD_CONFIG, new HookEventArgs { Attachment = isVellumConfig });
                                     break;
 
                                 case "updatecheck":
                                     Console.WriteLine("Checking for updates...");
 
                                     // BDS
-                                    UpdateChecker bdsUpdateChecker = new UpdateChecker(ReleaseProvider.HTML, "https://minecraft.net/en-us/download/server/bedrock/", @"https:\/\/minecraft\.azureedge\.net\/bin-" + (System.Environment.OSVersion.Platform == PlatformID.Win32NT ? "win" : "linux") + @"\/bedrock-server-(\d+\.\d+\.\d+(?>\.\d+)?)\.zip");
+                                    var bdsUpdateChecker = new UpdateChecker(
+                                        ReleaseProvider.HTML,
+                                        "https://minecraft.net/en-us/download/server/bedrock/",
+                                        @"https:\/\/minecraft\.azureedge\.net\/bin-" + (Environment.OSVersion.Platform == PlatformID.Win32NT ? "win" : "linux")
+                                                                                     + @"\/bedrock-server-(\d+\.\d+\.\d+(?>\.\d+)?)\.zip");
                                     if (bdsUpdateChecker.GetLatestVersion())
-                                        Console.WriteLine(String.Format("Bedrock Server:\t{0} -> {1}\t({2})", UpdateChecker.ParseVersion(bdsVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD), UpdateChecker.ParseVersion(bdsUpdateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD), UpdateChecker.CompareVersions(bdsVersion, bdsUpdateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD) < 0 ? "outdated" : "up to date"));
+                                        Console.WriteLine(
+                                            "Bedrock Server:\t{0} -> {1}\t({2})",
+                                            UpdateChecker.ParseVersion(bdsVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD),
+                                            UpdateChecker.ParseVersion(bdsUpdateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD),
+                                            UpdateChecker.CompareVersions(bdsVersion, bdsUpdateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION_BUILD) < 0 ? "outdated" : "up to date");
                                     else
                                         Console.WriteLine("Could not check for Bedrock server updates...");
 
                                     // vellum
                                     if (_updateChecker.GetLatestVersion())
-                                        Console.WriteLine(String.Format("vellum:\t\t{0} -> {1}\t({2})", UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION), UpdateChecker.ParseVersion(_updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION), UpdateChecker.CompareVersions(_localVersion, _updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION) < 0 ? "outdated" : "up to date"));
+                                        Console.WriteLine(
+                                            "vellum:\t\t{0} -> {1}\t({2})",
+                                            UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION),
+                                            UpdateChecker.ParseVersion(_updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION),
+                                            UpdateChecker.CompareVersions(_localVersion, _updateChecker.RemoteVersion, VersionFormatting.MAJOR_MINOR_REVISION) < 0 ? "outdated" : "up to date");
                                     else
                                         Console.WriteLine("Could not check for vellum updates...");
 
@@ -508,8 +539,12 @@ namespace Vellum
                                     break;
                             }
 
-                            if (!result) { Console.WriteLine("Could not execute vellum command \"{0}\".", text); }
+                            if (!result)
+                            {
+                                Console.WriteLine("Could not execute vellum command \"{0}\".", text);
+                            }
                         }
+
                         #endregion
                     }
                     else
@@ -522,57 +557,65 @@ namespace Vellum
             {
                 Console.WriteLine("No previous configuration file found. Creating one...");
 
-                using (StreamWriter writer = new StreamWriter(_configPath))
+                using (var writer = new StreamWriter(_configPath))
                 {
-                    writer.Write(JsonConvert.SerializeObject(new RunConfiguration()
-                    {
-                        BdsBinPath = System.Environment.OSVersion.Platform != PlatformID.Win32NT ? "bedrock_server" : "bedrock_server.exe",
-                        Backups = new BackupConfig()
-                        {
-                            EnableBackups = true,
-                            EnableSchedule = true,
-                            Schedule = new string[] {
-                                "00:00",
-                                "06:00",
-                                "12:00",
-                                "18:00"
+                    writer.Write(
+                        JsonConvert.SerializeObject(
+                            new RunConfiguration
+                            {
+                                BdsBinPath = Environment.OSVersion.Platform != PlatformID.Win32NT ? "bedrock_server" : "bedrock_server.exe",
+                                Backups = new BackupConfig
+                                {
+                                    EnableBackups = true,
+                                    EnableSchedule = true,
+                                    Schedule = new[] { "00:00", "06:00", "12:00", "18:00" },
+                                    BackupInterval = 60,
+                                    ArchivePath = "./backups/",
+                                    StopBeforeBackup = false,
+                                    NotifyBeforeStop = 60,
+                                    BackupsToKeep = 10,
+                                    OnActivityOnly = false,
+                                    PreExec = "",
+                                    PostExec = "",
+                                },
+                                Renders = new RenderConfig
+                                {
+                                    EnableRenders = true,
+                                    RenderInterval = 180,
+                                    PapyrusBinPath = "",
+                                    PapyrusGlobalArgs = "-w $WORLD_PATH -o $OUTPUT_PATH --htmlfile index.html -f png -q 100 --deleteexistingupdatefolder",
+                                    PapyrusTasks = new[] { "--dim 0", "--dim 1", "--dim 2" },
+                                    PapyrusOutputPath = "",
+                                    LowPriority = false,
+                                },
+                                QuietMode = false,
+                                HideStdout = true,
+                                BusyCommands = true,
+                                CheckForUpdates = true,
+                                StopBdsOnException = true,
+                                BdsWatchdog = true,
+                                Plugins = new Dictionary<string, PluginConfig>(),
                             },
-                            BackupInterval = 60,
-                            ArchivePath = "./backups/",
-                            StopBeforeBackup = false,
-                            NotifyBeforeStop = 60,
-                            BackupsToKeep = 10,
-                            OnActivityOnly = false,
-                            PreExec = "",
-                            PostExec = "",
-                        },
-                        Renders = new RenderConfig()
-                        {
-                            EnableRenders = true,
-                            RenderInterval = 180,
-                            PapyrusBinPath = "",
-                            PapyrusGlobalArgs = "-w $WORLD_PATH -o $OUTPUT_PATH --htmlfile index.html -f png -q 100 --deleteexistingupdatefolder",
-                            PapyrusTasks = new string[] {
-                                "--dim 0",
-                                "--dim 1",
-                                "--dim 2"
-                            },
-                            PapyrusOutputPath = "",
-                            LowPriority = false
-                        },
-                        QuietMode = false,
-                        HideStdout = true,
-                        BusyCommands = true,
-                        CheckForUpdates = true,
-                        StopBdsOnException = true,
-                        BdsWatchdog = true,
-                        Plugins = new Dictionary<string, PluginConfig>()
-                    },
-                        Formatting.Indented));
+                            Formatting.Indented));
                 }
 
-                Console.WriteLine(String.Format("Done! Please edit the \"{0}\" file and restart this application.", _configPath));
+                Console.WriteLine("Done! Please edit the \"{0}\" file and restart this application.", _configPath);
             }
+        }
+
+        public enum Hook
+        {
+            RELOAD_CONFIG,
+
+            BACKUP_SCHEDULED,
+
+            FORCE_BACKUP,
+
+            FORCE_RENDER,
+
+            EXIT_SCHEDULED, // Gets invoked as soon as the user schedules a server shutdown
+
+            EXIT_USER, // Gets invoked before exiting, given that the user manually requested a server shutdown using the "stop" command
         }
 
         public void InvokeBackup(string worldPath, string tempWorldPath)
@@ -583,7 +626,10 @@ namespace Vellum
             }
             else
             {
-                if (!RunConfig.QuietMode) { Console.WriteLine("A backup task is still running."); }
+                if (!RunConfig.QuietMode)
+                {
+                    Console.WriteLine("A backup task is still running.");
+                }
             }
         }
 
@@ -596,8 +642,32 @@ namespace Vellum
             }
             else
             {
-                if (!RunConfig.QuietMode) { Console.WriteLine("A render task is still running."); }
+                if (!RunConfig.QuietMode)
+                {
+                    Console.WriteLine("A render task is still running.");
+                }
             }
+        }
+
+        static void Main(string[] args)
+        {
+            var suffix = "";
+
+#if DEBUG
+            suffix = " DEBUG";
+#elif ALPHA
+            suffix = " alpha";
+#elif BETA
+            suffix = " beta";
+#endif
+
+            Console.WriteLine(
+                "vellum v{0} build {1}\n{2}by clarkx86, DeepBlue & contributors\n",
+                UpdateChecker.ParseVersion(_localVersion, VersionFormatting.MAJOR_MINOR_REVISION) + suffix,
+                _localVersion.Build,
+                new string(' ', 7));
+
+            new VellumHost(args);
         }
 
         private static RunConfiguration LoadConfiguration(string _configPath)
@@ -605,7 +675,7 @@ namespace Vellum
             Console.Write($"Loading configuration \"{_configPath}\"... ");
 
             RunConfiguration runConfig;
-            using (StreamReader reader = new StreamReader(Path.Join(Directory.GetCurrentDirectory(), _configPath)))
+            using (var reader = new StreamReader(Path.Join(Directory.GetCurrentDirectory(), _configPath)))
             {
                 runConfig = JsonConvert.DeserializeObject<RunConfiguration>(reader.ReadToEnd());
             }
@@ -621,12 +691,12 @@ namespace Vellum
             // may have been added to its respective sub-section in the "Plugins"-key.
             // This means the current RunConfig has to be serialized once again.
 
-            string runConfigJson = JsonConvert.SerializeObject(runConfig, Formatting.Indented);
+            var runConfigJson = JsonConvert.SerializeObject(runConfig, Formatting.Indented);
 
-            using (MD5 md5 = MD5.Create())
+            using (var md5 = MD5.Create())
             {
-                byte[] sourceHash = md5.ComputeHash(File.ReadAllBytes(Path.Join(Directory.GetCurrentDirectory(), _configPath)));
-                byte[] targetHash = md5.ComputeHash(Encoding.UTF8.GetBytes(runConfigJson));
+                var sourceHash = md5.ComputeHash(File.ReadAllBytes(Path.Join(Directory.GetCurrentDirectory(), _configPath)));
+                var targetHash = md5.ComputeHash(Encoding.UTF8.GetBytes(runConfigJson));
 
                 // System.Console.WriteLine(Convert.ToBase64String(sourceHash));
                 // System.Console.WriteLine(Convert.ToBase64String(targetHash));
@@ -635,7 +705,7 @@ namespace Vellum
                 {
                     Console.Write("Internal run-configuration has been modified, saving...");
 
-                    using (StreamWriter writer = new StreamWriter(File.Open(Path.Join(Directory.GetCurrentDirectory(), _configPath), FileMode.Truncate)))
+                    using (var writer = new StreamWriter(File.Open(Path.Join(Directory.GetCurrentDirectory(), _configPath), FileMode.Truncate)))
                         writer.Write(runConfigJson);
 
                     Console.WriteLine(" Done!");
@@ -647,8 +717,11 @@ namespace Vellum
     public static class CommonRegex
     {
         public const string Version = @"^.+ Version (\d+\.\d+\.\d+(?>\.\d+)?)";
+
         public const string ServerStarted = @"^.+ (Server started\.)";
+
         public const string PlayerConnected = @".+Player connected:\s(.+),";
+
         public const string PlayerDisconnected = @".+Player disconnected:\s(.+),";
     }
 }

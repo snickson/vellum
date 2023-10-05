@@ -1,19 +1,19 @@
-using System;
+namespace Vellum.Automation;
+
 using Vellum.Extension;
 
-namespace Vellum.Automation
+public abstract class Manager : InternalPlugin
 {
-    public abstract class Manager : InternalPlugin
-    {
-        protected static string _tag = "[         VELLUM         ] ";
-        protected static string _indent = "\t-> ";
-        public bool Processing { get; protected set; } = false;
+    protected static string Tag = "[         VELLUM         ] ";
 
-        protected static void Log(string text)
-        {
-            #if !IS_LIB
-            Console.WriteLine(text);
-            #endif
-        }
+    protected static string Indent = "\t-> ";
+
+    public bool Processing { get; protected set; }
+
+    protected static void Log(string text)
+    {
+#if !IS_LIB
+            System.Console.WriteLine(text);
+#endif
     }
 }

@@ -11,6 +11,7 @@
     <ApplicationIcon />
     <OutputType>Exe</OutputType>
     <StartupObject />
+    <AssemblyName>vellum</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
