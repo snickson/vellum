@@ -3,7 +3,7 @@
   <PropertyGroup>
     <DefineConstants Condition="'$(OutputType)' == 'Library'">IS_LIB</DefineConstants>
     <PublishSingleFile Condition="'$(OutputType)' == 'Exe' And '$(Configuration)' == 'Release'">true</PublishSingleFile>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net7.0</TargetFramework>
     <RootNamespace>Vellum</RootNamespace>
     <Configurations>Debug;Release;</Configurations>
     <Authors>clarkx86</Authors>
